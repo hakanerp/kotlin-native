@@ -1694,33 +1694,15 @@ internal class CodeGeneratorVisitor(val context: Context) : IrElementVisitorVoid
     private val  FunctionDescriptor.subroutineType: DISubroutineTypeRef
         get() = memScoped {
             DICreateSubroutineType(context.debugInfo.builder, allocArrayOf(
-	    this@subroutineType.valueParameters.map{it.diType}),
-	    this@subroutineType.valueParameters.size)!!
+                    this@subroutineType.types.map{ it.dwarfType(context, codegen.llvmTargetData)}),
+                    this@subroutineType.types.size)!!
         }
 
     //-------------------------------------------------------------------------//
     private val  VariableDescriptor.diType: DITypeOpaqueRef
-    get() = context.debugInfo.types.getOrPut(this.type) {
-        when {
-            KotlinBuiltIns.isInt(this.type)              -> debugInfoBaseType("Int",     LLVMInt32Type()!!)
-            KotlinBuiltIns.isBoolean(this.type)          -> debugInfoBaseType("Boolean", LLVMInt1Type()!!)
-            KotlinBuiltIns.isChar(this.type)             -> debugInfoBaseType("Char",    LLVMInt8Type()!!)
-            KotlinBuiltIns.isShort(this.type)            -> debugInfoBaseType("Short",   LLVMInt16Type()!!)
-            KotlinBuiltIns.isByte(this.type)             -> debugInfoBaseType("Byte",    LLVMInt8Type()!!)
-            KotlinBuiltIns.isLong(this.type)             -> debugInfoBaseType("Long",    LLVMInt64Type()!!)
-            KotlinBuiltIns.isFloat(this.type)            -> debugInfoBaseType("Float",   LLVMFloatType()!!)
-            KotlinBuiltIns.isDouble(this.type)           -> debugInfoBaseType("Double",  LLVMDoubleType()!!)
-            (!KotlinBuiltIns.isPrimitiveType(this.type)) -> debugInfoBaseType("Any?",    codegen.kObjHeaderPtr)
-            else                                         -> TODO(this.type.toString())
+        get() = context.debugInfo.types.getOrPut(this.type) {
+            this.type.dwarfType(context, codegen.llvmTargetData)
         }
-    }
-
-    private fun debugInfoBaseType(typeName:String, type:LLVMTypeRef) = DICreateBasicType(
-            context.debugInfo.builder, typeName,
-            LLVMSizeOfTypeInBits(codegen.llvmTargetData, type),
-            LLVMPreferredAlignmentOfType(codegen.llvmTargetData, type).toLong(), 0) as DITypeOpaqueRef
-
-
     //-------------------------------------------------------------------------//
     /**
      * Evaluates all arguments of [expression] that are explicitly represented in the IR.

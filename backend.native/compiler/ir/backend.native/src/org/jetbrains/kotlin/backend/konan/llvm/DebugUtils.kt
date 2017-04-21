@@ -16,15 +16,15 @@
 
 package org.jetbrains.kotlin.backend.konan.llvm
 
-import llvm.DICreateCompilationUnit
-import llvm.DICreateModule
-import llvm.DIScopeOpaqueRef
-import llvm.LLVMAddNamedMetadataOperand
+import llvm.*
 import org.jetbrains.kotlin.backend.konan.Context
 import org.jetbrains.kotlin.backend.konan.KonanConfigKeys
 import org.jetbrains.kotlin.backend.konan.KonanVersion
 import org.jetbrains.kotlin.ir.SourceManager.FileEntry
 import org.jetbrains.kotlin.backend.konan.util.File
+import org.jetbrains.kotlin.builtins.KotlinBuiltIns
+import org.jetbrains.kotlin.descriptors.FunctionDescriptor
+import org.jetbrains.kotlin.types.KotlinType
 
 
 internal object DWARF {
@@ -112,3 +112,30 @@ internal fun generateDebugInfoHeader(context: Context) {
         LLVMAddNamedMetadataOperand(context.llvmModule, llvmModuleFlags, nodeDebugInfoVersion)
     }
 }
+
+internal fun KotlinType.dwarfType(context:Context, targetData:LLVMTargetDataRef): DITypeOpaqueRef {
+    return when {
+        KotlinBuiltIns.isInt(this)              -> debugInfoBaseType(context, targetData, "Int",     LLVMInt32Type()!!)
+        KotlinBuiltIns.isBoolean(this)          -> debugInfoBaseType(context, targetData, "Boolean", LLVMInt1Type()!!)
+        KotlinBuiltIns.isChar(this)             -> debugInfoBaseType(context, targetData, "Char",    LLVMInt8Type()!!)
+        KotlinBuiltIns.isShort(this)            -> debugInfoBaseType(context, targetData, "Short",   LLVMInt16Type()!!)
+        KotlinBuiltIns.isByte(this)             -> debugInfoBaseType(context, targetData, "Byte",    LLVMInt8Type()!!)
+        KotlinBuiltIns.isLong(this)             -> debugInfoBaseType(context, targetData, "Long",    LLVMInt64Type()!!)
+        KotlinBuiltIns.isFloat(this)            -> debugInfoBaseType(context, targetData, "Float",   LLVMFloatType()!!)
+        KotlinBuiltIns.isDouble(this)           -> debugInfoBaseType(context, targetData, "Double",  LLVMDoubleType()!!)
+        (!KotlinBuiltIns.isPrimitiveType(this)) -> debugInfoBaseType(context, targetData, "Any?",    LLVMPointerType(LLVMInt64Type(), 0)!!)
+        else                                    -> TODO(toString())
+    }
+}
+
+@Suppress("UNCHECKED_CAST")
+private fun debugInfoBaseType(context:Context, targetData:LLVMTargetDataRef, typeName:String, type:LLVMTypeRef) = DICreateBasicType(
+        context.debugInfo.builder, typeName,
+        LLVMSizeOfTypeInBits(targetData, type),
+        LLVMPreferredAlignmentOfType(targetData, type).toLong(), 0) as DITypeOpaqueRef
+
+internal val FunctionDescriptor.types:List<KotlinType>
+    get() {
+        val parameters = valueParameters.map{it.type}
+        return if (returnType != null) listOf(returnType!!, *parameters.toTypedArray()) else parameters
+    }
