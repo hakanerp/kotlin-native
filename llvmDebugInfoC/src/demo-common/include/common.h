@@ -30,6 +30,7 @@ typedef struct {
 codegen g_codegen;
 
 #define SCOPE(x) ((DIScopeOpaqueRef)(x))
+#define TYPE(x)  ((DITypeOpaqueRef)(x))
 
 void codegen_init();
 void codegen_destroy();

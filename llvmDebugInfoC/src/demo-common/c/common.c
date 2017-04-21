@@ -37,6 +37,7 @@ codegen_destroy() {
   LLVMVerifyModule(g_codegen.module, LLVMPrintMessageAction, NULL);
   LLVMDumpModule(g_codegen.module);
   LLVMDisposeModule(g_codegen.module);
+  LLVMShutdown();
 }
 
 
