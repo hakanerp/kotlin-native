@@ -1665,6 +1665,7 @@ internal class CodeGeneratorVisitor(val context: Context) : IrElementVisitorVoid
     }
 
     //-------------------------------------------------------------------------//
+    @Suppress("UNCHECKED_CAST")
     private fun IrFunction.scope():DIScopeOpaqueRef? {
         if (!context.shouldContainDebugInfo()) return null
         return context.debugInfo.subprograms.getOrPut(descriptor) {
