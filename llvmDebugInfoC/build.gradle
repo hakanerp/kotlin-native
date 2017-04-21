@@ -48,18 +48,19 @@ model {
 
     demogenerated(NativeExecutableSpec) {
       //dependsOn project("debugInfoStaticLibrary")
-      sources.c.source.srcDirs "src/demo-generated/c"
+      sources.c.source.srcDirs "src/demo-generated/c", "src/demo-common/c"
       binaries.all {
          cCompiler.args "-g", "-I${llvmDir}/include",
-                  "-I${projectDir}/src/main/include"
+                  "-I${projectDir}/src/main/include",
+		  "-I${projectDir}/src/demo-common/include"
          if (targetPlatform.operatingSystem.linux) {
              linker.args "-L${buildDir}/libs/debugInfo/static", "-ldebugInfo",
 	             "-L${llvmDir}/lib", "-Wl,-(", "-lLLVMSupport", "-lLLVMAnalysis", "-lLLVMProfileData", "-lLLVMCore", "-Wl,-)",
                      "-L/usr/lib/x86_64-linux-gnu", "-L/lib/x86_64-linux-gnu", "-lncurses", "-lz",
 		      "-ldl", "-lpthread"
          } else {
-	     linker.args "-L${llvmDir}/lib", "-lLLVMCore", "-lLLVMSupport",
-                     "-lncurses", "-L${buildDir}/libs/debugInfo/static", "-ldebugInfo"
+	     linker.args "-L${llvmDir}/lib", "-lLLVMCore", "-lLLVMSupport", "-lLLVMAnalysis", "-lLLVMProfileData",
+                     "-lncurses", "-lz", "-L${buildDir}/libs/debugInfo/static", "-ldebugInfo"
 	 }
       }
     }
