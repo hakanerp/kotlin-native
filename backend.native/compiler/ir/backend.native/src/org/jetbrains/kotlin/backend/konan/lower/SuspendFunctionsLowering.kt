@@ -874,6 +874,20 @@ internal class SuspendFunctionsLowering(val context: Context): DeclarationContai
                             descriptor  = newVariable,
                             initializer = declaration.initializer)
                 }
+
+                override fun visitCatch(aCatch: IrCatch): IrCatch {
+                    aCatch.transformChildrenVoid(this)
+
+                    val newVariable = variablesMap[aCatch.parameter]
+                            ?: return aCatch
+
+                    return IrCatchImpl(
+                            startOffset = aCatch.startOffset,
+                            endOffset   = aCatch.endOffset,
+                            parameter   = newVariable,
+                            result      = aCatch.result
+                    )
+                }
             })
         }
 
@@ -950,7 +964,8 @@ internal class SuspendFunctionsLowering(val context: Context): DeclarationContai
                 irBuilder.run {
                     // TODO: What other kinds can be here?
                     if ((expression is IrWhen && expression.branches.any { it.result.hasSuspendCalls() })
-                            || (expression is IrContainerExpression && expression.hasSuspendCalls())) {
+                            || (expression is IrContainerExpression && expression.hasSuspendCalls())
+                            || (expression is IrTry && expression.hasSuspendCalls())) {
                         expression.transformChildrenVoid(this@ExpressionSlicer)
 
                         val tempResult = IrTemporaryVariableDescriptorImpl(
