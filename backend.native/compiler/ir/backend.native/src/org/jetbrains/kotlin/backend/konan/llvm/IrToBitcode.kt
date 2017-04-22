@@ -25,10 +25,7 @@ import org.jetbrains.kotlin.backend.konan.KonanConfigKeys
 import org.jetbrains.kotlin.backend.konan.KonanPhase
 import org.jetbrains.kotlin.backend.konan.PhaseManager
 import org.jetbrains.kotlin.backend.konan.descriptors.*
-import org.jetbrains.kotlin.backend.konan.ir.IrInlineFunctionBody
-import org.jetbrains.kotlin.backend.konan.ir.IrSuspendableExpression
-import org.jetbrains.kotlin.backend.konan.ir.IrSuspensionPoint
-import org.jetbrains.kotlin.backend.konan.ir.ir2string
+import org.jetbrains.kotlin.backend.konan.ir.*
 import org.jetbrains.kotlin.builtins.KotlinBuiltIns
 import org.jetbrains.kotlin.descriptors.*
 import org.jetbrains.kotlin.ir.IrElement
@@ -491,7 +488,7 @@ internal class CodeGeneratorVisitor(val context: Context) : IrElementVisitorVoid
 
         override fun genReturn(target: CallableDescriptor, value: LLVMValueRef?) {
             if (declaration == null || target == declaration.descriptor) {
-                if (target.returnType!!.isUnit()) {
+                if (target.returnsUnit()) {
                     assert (value == null)
                     codegen.ret(null)
                 } else {
@@ -1455,7 +1452,7 @@ internal class CodeGeneratorVisitor(val context: Context) : IrElementVisitorVoid
         val evaluated = evaluateExpression(value)
 
         val target = expression.returnTarget
-        val ret = if (target.returnType!!.isUnit()) {
+        val ret = if (target.returnsUnit()) {
             null
         } else {
             evaluated
@@ -1496,7 +1493,7 @@ internal class CodeGeneratorVisitor(val context: Context) : IrElementVisitorVoid
                                                                                 // It is local return from current function.
             codegen.br(getExit())                                               // Generate branch on exit block.
 
-            if (!KotlinBuiltIns.isUnit(inlineBody.type)) {                      // If function returns more then "unit"
+            if (!target.returnsUnit()) {                                        // If function returns more then "unit"
                 codegen.assignPhis(getResult() to value!!)                      // Assign return value to result PHI node.
             }
         }
@@ -1735,6 +1732,8 @@ internal class CodeGeneratorVisitor(val context: Context) : IrElementVisitorVoid
     //-------------------------------------------------------------------------//
 
     private val coroutineImplDescriptor = context.builtIns.getKonanInternalClass("CoroutineImpl")
+
+    private fun CallableDescriptor.returnsUnit() = returnType == context.builtIns.unitType && !isSuspendFunctionOrLambda
 
     /**
      * Evaluates all arguments of [expression] that are explicitly represented in the IR.

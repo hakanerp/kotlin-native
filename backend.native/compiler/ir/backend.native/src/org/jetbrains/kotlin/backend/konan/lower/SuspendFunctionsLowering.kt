@@ -44,6 +44,7 @@ import org.jetbrains.kotlin.name.Name
 import org.jetbrains.kotlin.types.KotlinType
 import org.jetbrains.kotlin.types.TypeProjectionImpl
 import org.jetbrains.kotlin.types.TypeSubstitutor
+import org.jetbrains.kotlin.types.typeUtil.isUnit
 import org.jetbrains.kotlin.types.typeUtil.makeNotNullable
 
 internal class SuspendFunctionsLowering(val context: Context): DeclarationContainerLoweringPass {
@@ -826,6 +827,8 @@ internal class SuspendFunctionsLowering(val context: Context): DeclarationContai
                                     +irThrowIfGotException()        // Coroutine might start with an exception.
                                     statements.forEach { +it }
                                 })
+                        if (irFunction.descriptor.returnType!!.isUnit())
+                            +irReturn(irUnit())                             // Insert explicit return for Unit functions.
                     }
                 }
             }
@@ -965,8 +968,13 @@ internal class SuspendFunctionsLowering(val context: Context): DeclarationContai
                     // TODO: What other kinds can be here?
                     if ((expression is IrWhen && expression.branches.any { it.result.hasSuspendCalls() })
                             || (expression is IrContainerExpression && expression.hasSuspendCalls())
-                            || (expression is IrTry && expression.hasSuspendCalls())) {
+                            || (expression is IrTry && expression.hasSuspendCalls())
+                            || (expression is IrLoop && expression.hasSuspendCalls())) {
                         expression.transformChildrenVoid(this@ExpressionSlicer)
+
+                        if (expression.type.isUnit()) {
+                            return SlicedExpression(irUnit(), listOf(expression))
+                        }
 
                         val tempResult = IrTemporaryVariableDescriptorImpl(
                                 containingDeclaration = irFunction.descriptor,
@@ -1044,7 +1052,11 @@ internal class SuspendFunctionsLowering(val context: Context): DeclarationContai
                                 +irGet(dataArgument)
                             })
                     tempStatements.add(irVar(currentSuspendResult, suspensionPoint))
-                    return SlicedExpression(irCast(irGet(currentSuspendResult), expression.type, expression.type), tempStatements)
+                    val expressionResult = when {
+                        expression.type.isUnit() -> IrCompositeImpl(startOffset, endOffset, expression.type)
+                        else -> irCast(irGet(currentSuspendResult), expression.type, expression.type)
+                    }
+                    return SlicedExpression(expressionResult, tempStatements)
                 }
             }
 
