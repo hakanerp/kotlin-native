@@ -3,6 +3,9 @@ package konan.internal
 import kotlin.coroutines.experimental.*
 import kotlin.coroutines.experimental.intrinsics.*
 
+@Intrinsic
+internal fun <T> getContinuation(): Continuation<T> = throw AssertionError("Call to getContinuation should've been lowered")
+
 // Single-threaded continuation.
 class SafeContinuation<in T>
 constructor(

@@ -72,6 +72,17 @@ internal fun DeclarationDescriptor.createFakeOverrideDescriptor(owner: ClassDesc
     }
 }
 
+internal fun FunctionDescriptor.createOverriddenDescriptor(owner: ClassDescriptor, final: Boolean = true): FunctionDescriptor {
+    return this.newCopyBuilder()
+            .setOwner(owner)
+            .setCopyOverrides(true)
+            .setModality(if (final) Modality.FINAL else Modality.OPEN)
+            .setDispatchReceiverParameter(owner.thisAsReceiverParameter)
+            .build()!!.apply {
+        overriddenDescriptors += this@createOverriddenDescriptor
+    }
+}
+
 internal fun ClassDescriptor.createSimpleDelegatingConstructorDescriptor(superConstructorDescriptor: ClassConstructorDescriptor, isPrimary: Boolean = false)
         : ClassConstructorDescriptor {
     val constructorDescriptor = ClassConstructorDescriptorImpl.createSynthesized(

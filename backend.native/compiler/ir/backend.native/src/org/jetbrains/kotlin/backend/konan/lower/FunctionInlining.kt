@@ -21,26 +21,32 @@ package org.jetbrains.kotlin.backend.konan.lower
 import org.jetbrains.kotlin.backend.common.DeepCopyIrTreeWithDescriptors
 import org.jetbrains.kotlin.backend.common.IrElementTransformerVoidWithContext
 import org.jetbrains.kotlin.backend.common.ScopeWithIr
+import org.jetbrains.kotlin.backend.common.lower.createIrBuilder
+import org.jetbrains.kotlin.ir.builders.*
 import org.jetbrains.kotlin.backend.common.reportWarning
 import org.jetbrains.kotlin.backend.konan.Context
+import org.jetbrains.kotlin.backend.konan.descriptors.getKonanInternalFunctions
 import org.jetbrains.kotlin.backend.konan.descriptors.isFunctionInvoke
 import org.jetbrains.kotlin.backend.konan.descriptors.needsInlining
 import org.jetbrains.kotlin.backend.konan.ir.DeserializerDriver
 import org.jetbrains.kotlin.backend.konan.ir.IrInlineFunctionBody
-import org.jetbrains.kotlin.descriptors.FunctionDescriptor
-import org.jetbrains.kotlin.descriptors.ValueDescriptor
-import org.jetbrains.kotlin.descriptors.ValueParameterDescriptor
+import org.jetbrains.kotlin.descriptors.*
+import org.jetbrains.kotlin.incremental.components.NoLookupLocation
 import org.jetbrains.kotlin.ir.IrElement
 import org.jetbrains.kotlin.ir.IrStatement
+import org.jetbrains.kotlin.ir.builders.IrBuilderWithScope
+import org.jetbrains.kotlin.ir.declarations.IrDeclarationOriginImpl
 import org.jetbrains.kotlin.ir.declarations.IrFunction
 import org.jetbrains.kotlin.ir.declarations.IrModuleFragment
+import org.jetbrains.kotlin.ir.declarations.impl.IrFunctionImpl
 import org.jetbrains.kotlin.ir.expressions.*
-import org.jetbrains.kotlin.ir.expressions.impl.IrGetValueImpl
-import org.jetbrains.kotlin.ir.expressions.impl.IrMemberAccessExpressionBase
-import org.jetbrains.kotlin.ir.expressions.impl.IrVarargImpl
+import org.jetbrains.kotlin.ir.expressions.impl.*
 import org.jetbrains.kotlin.ir.visitors.IrElementTransformerVoid
 import org.jetbrains.kotlin.ir.visitors.transformChildrenVoid
+import org.jetbrains.kotlin.name.FqName
+import org.jetbrains.kotlin.name.Name
 import org.jetbrains.kotlin.resolve.descriptorUtil.hasDefaultValue
+import org.jetbrains.kotlin.types.KotlinType
 import org.jetbrains.kotlin.types.TypeProjectionImpl
 import org.jetbrains.kotlin.types.TypeSubstitutor
 
@@ -77,13 +83,62 @@ internal class FunctionInlining(val context: Context): IrElementTransformerVoidW
 
     //-------------------------------------------------------------------------//
 
+    private val COROUTINES_INTRINSICS_FQ_NAME = FqName.fromSegments(listOf("kotlin", "coroutines", "experimental", "intrinsics"))
+    private val coroutinesIntrinsicsScope = context.irModule!!.descriptor.getPackage(COROUTINES_INTRINSICS_FQ_NAME).memberScope
+    private val suspendCoroutineOrReturnDescriptor = coroutinesIntrinsicsScope.getContributedFunctions(Name.identifier("suspendCoroutineOrReturn"), NoLookupLocation.FROM_BACKEND).single()
+    private val normalizeContinuationDescriptor = context.builtIns.getKonanInternalFunctions("normalizeContinuation").single()
+    private val getContinuationDescriptor = context.builtIns.getKonanInternalFunctions("getContinuation").single()
+
+    private object DECLARATION_ORIGIN_SUSPEND_COROUTINE_OR_RETURN :
+            IrDeclarationOriginImpl("SUSPEND_COROUTINE_OR_RETURN")
+
+    private fun IrBuilderWithScope.irCall(descriptor: CallableDescriptor,
+                                          typeArguments: Map<TypeParameterDescriptor, KotlinType>? = null): IrCall
+            = IrCallImpl(startOffset, endOffset, descriptor, typeArguments)
+
+    // This is a special inline function with explicitly specified body that cannot be written in source code.
+    private fun generateSuspendCoroutineOrReturn(startOffset: Int, endOffset: Int): IrFunction {
+        val typeArguments = mutableMapOf<TypeParameterDescriptor, KotlinType>()
+        typeArguments.put(normalizeContinuationDescriptor.typeParameters[0], suspendCoroutineOrReturnDescriptor.typeParameters[0].defaultType)
+        val irBuilder = context.createIrBuilder(suspendCoroutineOrReturnDescriptor, startOffset, endOffset)
+        irBuilder.run {
+            val normalizedContinuation = irCall(normalizeContinuationDescriptor, typeArguments).apply {
+                val typeParameterT = getContinuationDescriptor.typeParameters[0]
+                val returnType = suspendCoroutineOrReturnDescriptor.typeParameters[0].defaultType
+                val typeSubstitutor = TypeSubstitutor.create(mapOf(typeParameterT.typeConstructor to TypeProjectionImpl(returnType)))
+                val substituted = getContinuationDescriptor.substitute(typeSubstitutor)!!
+                putValueArgument(0, irCall(substituted))
+            }
+            val invokeDescriptor = suspendCoroutineOrReturnDescriptor.valueParameters[0].type.memberScope
+                    .getContributedFunctions(Name.identifier("invoke"), NoLookupLocation.FROM_BACKEND).single()
+            return IrFunctionImpl(
+                    startOffset = startOffset,
+                    endOffset   = endOffset,
+                    origin      = DECLARATION_ORIGIN_SUSPEND_COROUTINE_OR_RETURN,
+                    descriptor  = suspendCoroutineOrReturnDescriptor).apply {
+                body = irBlockBody {
+                    +irReturn(
+                            irCall(invokeDescriptor).apply {
+                                dispatchReceiver = irBuilder.irGet(suspendCoroutineOrReturnDescriptor.valueParameters[0])
+                                putValueArgument(0, normalizedContinuation)
+                            }
+                    )
+                }
+            }
+        }
+    }
+
+    //-------------------------------------------------------------------------//
+
     private fun getFunctionDeclaration(irCall: IrCall): IrFunction? {
 
         val functionDescriptor = irCall.descriptor as FunctionDescriptor
         val originalDescriptor = functionDescriptor.original
+        if (originalDescriptor == suspendCoroutineOrReturnDescriptor)
+            return generateSuspendCoroutineOrReturn(irCall.startOffset, irCall.endOffset)
         val functionDeclaration =
-            context.ir.originalModuleIndex.functions[originalDescriptor] ?:                 // If function is declared in the current module.
-                deserializer.deserializeInlineBody(originalDescriptor)                      // Function is declared in another module.
+                context.ir.originalModuleIndex.functions[originalDescriptor] ?:                 // If function is declared in the current module.
+                        deserializer.deserializeInlineBody(originalDescriptor)                  // Function is declared in another module.
         return functionDeclaration as IrFunction?
     }
 
