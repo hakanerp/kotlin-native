@@ -14,6 +14,8 @@
  * limitations under the License.
  */
 
+#include <DebugInfoC.h>
+#include <common.h>
  /**
   * 0:b-debugger-types:minamoto@unit-703(0)# clang -g -xc -emit-llvm -S -o - -
   * struct A{
@@ -82,9 +84,54 @@
   * !23 = !DILocation(line: 8, column: 9, scope: !7)
   * !24 = !DILocation(line: 8, column: 2, scope: !7)
   */
+static DIFileRef           file;
+static DISubroutineTypeRef subroutine_type;
+static LLVMTypeRef         int_type;
+
+static void
+create_main() {
+  DISubprogramRef di;
+  location loc = {&file, 1};
+  create_function_with_entry("main", loc, subroutine_type, &di);
+  LLVMBuildRet(g_codegen.llvm_builder, LLVMConstInt(LLVMInt32Type(), 42, 1));
+}
+
 
 int
 main() {
   codegen_init();
-  codegen_destroy();
+  DITypeOpaqueRef int_type  = TYPE(DICreateBasicType(g_codegen.di_builder, "int", 32, 4, 0));
+  DITypeOpaqueRef elements_int_type[2];
+  file             = DICreateFile(g_codegen.di_builder, "<stdin>", "");
+  //DICompositeTypeRef tempA = DICreateReplaceableCompositeType(g_codegen.di_builder, "A", SCOPE(g_codegen.di_compile_unit), file, 2);
+  elements_int_type[0] = TYPE(DICreateMemberType(
+                                /* builder      = */ g_codegen.di_builder,
+                                /* scope        = */ SCOPE(int_type), /* note: here dump points to structure ???*/
+                                /* name         = */ "a",
+                                /* file         = */ file,
+                                /* lineNum      = */ 2,
+                                /* sizeInBits   = */ 32,
+                                /* alignInBits  = */ 32,
+                                /* offsetInBits = */ 0,
+                                /* flags        = */ 0,
+                                /* type         = */ int_type));
+  elements_int_type[1] = TYPE(DICreateMemberType(
+                                /* builder      = */ g_codegen.di_builder,
+                                /* scope        = */ SCOPE(int_type),
+                                /* name         = */ "b",
+                                /* file         = */ file,
+                                /* lineNum      = */ 2,
+                                /* sizeInBits   = */ 32,
+                                /* alignInBits  = */ 32,
+                                /* offsetInBits = */ 32,
+                                /* flags        = */ 0,
+                                /* type         = */ int_type));
+
+  DITypeOpaqueRef A_type  = TYPE(DICreateStructType(
+                                   g_codegen.di_builder,
+                                   g_codegen.di_compile_unit,
+                                   "A", file, 2, 64, 32, 0, (void *)0, elements_int_type, 2, (void *)0));
+   subroutine_type  = DICreateSubroutineType(g_codegen.di_builder, &A_type, 1);
+   create_main();
+   codegen_destroy();
 }

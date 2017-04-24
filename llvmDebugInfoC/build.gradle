@@ -74,5 +74,18 @@ model {
 	 }
       }
     }
+
+    demotypes(NativeExecutableSpec) {
+      //dependsOn project("debugInfoStaticLibrary")
+      sources.c.source.srcDirs "src/demo-types/c", "src/demo-common/c"
+      binaries.all {
+         cCompiler.args.addAll(demoCFlags)
+         if (targetPlatform.operatingSystem.linux) {
+             linker.args.addAll(demoLdFlagsLinux)
+         } else {
+      	     linker.args.addAll(demoLdFlagsMac)
+         }
+      }
+    }
   }
 }
