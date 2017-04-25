@@ -84,6 +84,13 @@ internal class IrDescriptorSerializer(
         val typeParameters = descriptor.propertyIfAccessor.typeParameters
         typeParameters.forEach {
             proto.addTypeParameter(serializeDescriptor(it))
+            // We explicitly serialize type parameters
+            // as types here so that they are placed in natural
+            // order of declaration. Otherwise sometimes
+            // they appear in the order of appearence in the 
+            // body (including value parameters) ofthe function.
+            // And the two orders clash on deserialization.
+            serializeKotlinType(it.defaultType)
         }
 
         descriptor.valueParameters.forEach {
