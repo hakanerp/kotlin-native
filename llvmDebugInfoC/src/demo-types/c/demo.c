@@ -101,36 +101,36 @@ int
 main() {
   codegen_init();
   DITypeOpaqueRef int_type  = TYPE(DICreateBasicType(g_codegen.di_builder, "int", 32, 4, 0));
-  DITypeOpaqueRef elements_int_type[2];
+  DIDerivedTypeRef elements_int_type[2];
   file             = DICreateFile(g_codegen.di_builder, "<stdin>", "");
-  //DICompositeTypeRef tempA = DICreateReplaceableCompositeType(g_codegen.di_builder, "A", SCOPE(g_codegen.di_compile_unit), file, 2);
-  elements_int_type[0] = TYPE(DICreateMemberType(
+  DICompositeTypeRef tempA = DICreateReplaceableCompositeType(g_codegen.di_builder, "A", SCOPE(g_codegen.di_compile_unit), file, 2);
+  elements_int_type[0] = DICreateMemberType(
                                 /* builder      = */ g_codegen.di_builder,
-                                /* scope        = */ SCOPE(int_type), /* note: here dump points to structure ???*/
+                                /* scope        = */ SCOPE(tempA), /* note: here dump points to structure ???*/
                                 /* name         = */ "a",
                                 /* file         = */ file,
-                                /* lineNum      = */ 2,
+                                /* lineNum      = */ 3,
                                 /* sizeInBits   = */ 32,
                                 /* alignInBits  = */ 32,
                                 /* offsetInBits = */ 0,
                                 /* flags        = */ 0,
-                                /* type         = */ int_type));
-  elements_int_type[1] = TYPE(DICreateMemberType(
+                                /* type         = */ int_type);
+  elements_int_type[1] = DICreateMemberType(
                                 /* builder      = */ g_codegen.di_builder,
-                                /* scope        = */ SCOPE(int_type),
+                                /* scope        = */ SCOPE(tempA),
                                 /* name         = */ "b",
                                 /* file         = */ file,
-                                /* lineNum      = */ 2,
+                                /* lineNum      = */ 4,
                                 /* sizeInBits   = */ 32,
                                 /* alignInBits  = */ 32,
                                 /* offsetInBits = */ 32,
                                 /* flags        = */ 0,
-                                /* type         = */ int_type));
+                                /* type         = */ int_type);
 
   DITypeOpaqueRef A_type  = TYPE(DICreateStructType(
                                    g_codegen.di_builder,
                                    g_codegen.di_compile_unit,
-                                   "A", file, 2, 64, 32, 0, (void *)0, elements_int_type, 2, (void *)0));
+                                   "A", file, 2, 64, 32, 0, (void *)0, elements_int_type, 2, tempA));
    subroutine_type  = DICreateSubroutineType(g_codegen.di_builder, &A_type, 1);
    create_main();
    codegen_destroy();
