@@ -309,7 +309,7 @@ internal class IrDescriptorDeserializer(val context: Context,
     }
 
     fun matchNameInParentScope(proto: KonanIr.KotlinDescriptor): Collection<DeclarationDescriptor> {
-        val classOrPackage = proto.classOrPackage
+        val classOrPackage = proto.classOrPackage!!
         val name = proto.name
 
         when (proto.kind) {
