@@ -102,13 +102,13 @@ DICompositeTypeRef DICreateStructType(DIBuilderRef refBuilder,
                                       DIFileRef file, unsigned lineNumber,
                                       uint64_t sizeInBits, uint64_t alignInBits,
                                       unsigned flags, DITypeOpaqueRef derivedFrom,
-                                      DITypeOpaqueRef *elements,
+                                      DIDerivedTypeRef *elements,
                                       uint64_t elementsCount,
                                       DICompositeTypeRef refPlace) {
   auto builder = llvm::unwrap(refBuilder);
   std::vector<llvm::Metadata *> typeElements;
   for(int i = 0; i != elementsCount; ++i) {
-    typeElements.push_back(llvm::unwrap(elements[i])->getRawScope());
+    typeElements.push_back(llvm::unwrap(elements[i]));
   }
   auto elementsArray = builder->getOrCreateArray(typeElements);
     
@@ -118,7 +118,7 @@ DICompositeTypeRef DICreateStructType(DIBuilderRef refBuilder,
                                               sizeInBits, alignInBits, flags,
                                               llvm::unwrap(derivedFrom),
                                               elementsArray);
-  //  builder->replaceTemporary((*llvm::unwrap(refPlace)->getRawScope()), composite);
+  builder->replaceTemporary(llvm::TempDIType(llvm::unwrap(refPlace)), composite);
   return llvm::wrap(composite);
 }
 
@@ -150,7 +150,7 @@ DICompositeTypeRef DICreateReplaceableCompositeType(DIBuilderRef refBuilder,
                                                   DIFileRef refFile,
                                                   unsigned line) {
   return llvm::wrap(llvm::unwrap(refBuilder)->createReplaceableCompositeType(
-                      0, name, llvm::unwrap(refScope), llvm::unwrap(refFile), line));
+                      0x13, name, llvm::unwrap(refScope), llvm::unwrap(refFile), line));
 }
                                                     
   

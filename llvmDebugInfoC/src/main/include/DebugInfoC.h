@@ -50,7 +50,7 @@ DICompositeTypeRef DICreateStructType(DIBuilderRef refBuilder,
                                       DIFileRef file, unsigned lineNumber,
                                       uint64_t sizeInBits, uint64_t alignInBits,
                                       unsigned flags, DITypeOpaqueRef derivedFrom,
-                                      DITypeOpaqueRef *elements,
+                                      DIDerivedTypeRef *elements,
                                       uint64_t elementsCount,
                                       DICompositeTypeRef refPlace);
 DICompositeTypeRef DICreateReplaceableCompositeType(DIBuilderRef refBuilder,
