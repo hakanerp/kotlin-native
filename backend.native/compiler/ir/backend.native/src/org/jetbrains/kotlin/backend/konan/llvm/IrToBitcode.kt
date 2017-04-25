@@ -27,6 +27,7 @@ import org.jetbrains.kotlin.backend.konan.descriptors.*
 import org.jetbrains.kotlin.backend.konan.ir.IrInlineFunctionBody
 import org.jetbrains.kotlin.backend.konan.ir.ir2string
 import org.jetbrains.kotlin.builtins.KotlinBuiltIns
+import org.jetbrains.kotlin.codegen.context.ClassContext
 import org.jetbrains.kotlin.descriptors.*
 import org.jetbrains.kotlin.ir.IrElement
 import org.jetbrains.kotlin.ir.IrStatement
@@ -197,6 +198,8 @@ internal interface CodeContext {
      * @return the requested value
      */
     fun fileScope(): CodeContext?
+
+    fun classScope(): CodeContext?
 }
 
 //-------------------------------------------------------------------------//
@@ -239,6 +242,8 @@ internal class CodeGeneratorVisitor(val context: Context) : IrElementVisitorVoid
         override fun functionScope(): CodeContext? = null
 
         override fun fileScope(): CodeContext? = null
+
+        override fun classScope(): CodeContext? = null
     }
 
     /**
@@ -568,8 +573,33 @@ internal class CodeGeneratorVisitor(val context: Context) : IrElementVisitorVoid
             // do not generate any code for annotation classes as a workaround for NotImplementedError
             return
         }
-
-        declaration.acceptChildrenVoid(this)
+        using(ClassScope(declaration)) {
+            if (declaration.descriptor.isExported()) {
+                context.debugInfo.types[declaration.descriptor.defaultType] = DICreateReplaceableCompositeType(
+                        refBuilder = context.debugInfo.builder,
+                        refScope   = context.debugInfo.compilationModule as DIScopeOpaqueRef,
+                        name       = declaration.descriptor.typeInfoSymbolName,
+                        refFile    = file().file(),
+                        line       = declaration.line()) as DITypeOpaqueRef
+            }
+            declaration.acceptChildrenVoid(this)
+            if (declaration.descriptor.isExported()) {
+                context.debugInfo.types[declaration.descriptor.defaultType] = DICreateStructType(
+                        refBuilder    = context.debugInfo.builder,
+                        scope         = context.debugInfo.compilationModule as DIScopeOpaqueRef,
+                        name          = declaration.descriptor.typeInfoSymbolName,
+                        file          = file().file(),
+                        lineNumber    = declaration.line(),
+                        sizeInBits    = 64 /* TODO */,
+                        alignInBits   = 4 /* TODO */,
+                        derivedFrom   = null,
+                        elements      = null,
+                        elementsCount = 0,
+                        refPlace      = context.debugInfo.types[declaration.descriptor.defaultType] as DICompositeTypeRef,
+                        flags         = 0
+                ) as DITypeOpaqueRef
+            }
+        }
     }
 
     //-------------------------------------------------------------------------//
@@ -1495,6 +1525,12 @@ internal class CodeGeneratorVisitor(val context: Context) : IrElementVisitorVoid
 
     private inner class FileScope(val file:IrFile) : InnerScopeImpl() {
         override fun fileScope(): CodeContext? = this
+    }
+
+    //-------------------------------------------------------------------------//
+
+    private inner class ClassScope(val clazz:IrClass) : InnerScopeImpl() {
+        override fun classScope(): CodeContext? = this
     }
 
     //-------------------------------------------------------------------------//
