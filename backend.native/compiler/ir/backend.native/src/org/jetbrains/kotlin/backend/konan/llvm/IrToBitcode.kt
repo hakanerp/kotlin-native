@@ -19,12 +19,15 @@ package org.jetbrains.kotlin.backend.konan.llvm
 import kotlinx.cinterop.*
 import llvm.*
 import org.jetbrains.kotlin.backend.common.descriptors.allParameters
+import org.jetbrains.kotlin.backend.common.descriptors.isSuspendFunctionOrLambda
 import org.jetbrains.kotlin.backend.konan.Context
 import org.jetbrains.kotlin.backend.konan.KonanConfigKeys
 import org.jetbrains.kotlin.backend.konan.KonanPhase
 import org.jetbrains.kotlin.backend.konan.PhaseManager
 import org.jetbrains.kotlin.backend.konan.descriptors.*
 import org.jetbrains.kotlin.backend.konan.ir.IrInlineFunctionBody
+import org.jetbrains.kotlin.backend.konan.ir.IrSuspendableExpression
+import org.jetbrains.kotlin.backend.konan.ir.IrSuspensionPoint
 import org.jetbrains.kotlin.backend.konan.ir.ir2string
 import org.jetbrains.kotlin.builtins.KotlinBuiltIns
 import org.jetbrains.kotlin.descriptors.*
@@ -40,6 +43,7 @@ import org.jetbrains.kotlin.ir.visitors.acceptVoid
 import org.jetbrains.kotlin.resolve.DescriptorUtils
 import org.jetbrains.kotlin.resolve.descriptorUtil.fqNameSafe
 import org.jetbrains.kotlin.resolve.descriptorUtil.fqNameUnsafe
+import org.jetbrains.kotlin.resolve.descriptorUtil.getSuperClassOrAny
 import org.jetbrains.kotlin.types.KotlinType
 import org.jetbrains.kotlin.types.TypeUtils
 import org.jetbrains.kotlin.types.typeUtil.isNothing
@@ -197,6 +201,7 @@ internal interface CodeContext {
      * @return the requested value
      */
     fun fileScope(): CodeContext?
+    fun addResumePoint(bbLabel: LLVMBasicBlockRef)
 }
 
 //-------------------------------------------------------------------------//
@@ -239,6 +244,8 @@ internal class CodeGeneratorVisitor(val context: Context) : IrElementVisitorVoid
         override fun functionScope(): CodeContext? = null
 
         override fun fileScope(): CodeContext? = null
+        
+        override fun addResumePoint(bbLabel: LLVMBasicBlockRef) = unsupported(bbLabel)
     }
 
     /**
@@ -329,6 +336,7 @@ internal class CodeGeneratorVisitor(val context: Context) : IrElementVisitorVoid
     }
 
     //-------------------------------------------------------------------------//
+
     override fun visitFile(declaration: IrFile) {
 
         context.llvm.fileInitializers.clear()
@@ -610,30 +618,33 @@ internal class CodeGeneratorVisitor(val context: Context) : IrElementVisitorVoid
 
     private fun evaluateExpression(value: IrExpression): LLVMValueRef {
         when (value) {
-            is IrTypeOperatorCall    -> return evaluateTypeOperator       (value)
-            is IrCall                -> return evaluateCall               (value)
+            is IrTypeOperatorCall    -> return evaluateTypeOperator           (value)
+            is IrCall                -> return evaluateCall                   (value)
             is IrDelegatingConstructorCall ->
-                                        return evaluateCall(value)
+                                        return evaluateCall                   (value)
             is IrInstanceInitializerCall ->
                                         return evaluateInstanceInitializerCall(value)
-            is IrGetValue            -> return evaluateGetValue           (value)
-            is IrSetVariable         -> return evaluateSetVariable        (value)
-            is IrGetField            -> return evaluateGetField           (value)
-            is IrSetField            -> return evaluateSetField           (value)
-            is IrConst<*>            -> return evaluateConst              (value)
-            is IrReturn              -> return evaluateReturn             (value)
-            is IrWhen                -> return evaluateWhen               (value)
-            is IrThrow               -> return evaluateThrow              (value)
-            is IrTry                 -> return evaluateTry                (value)
-            is IrInlineFunctionBody  -> return evaluateInlineFunction     (value)
-            is IrContainerExpression -> return evaluateContainerExpression(value)
-            is IrWhileLoop           -> return evaluateWhileLoop          (value)
-            is IrDoWhileLoop         -> return evaluateDoWhileLoop        (value)
-            is IrVararg              -> return evaluateVararg             (value)
-            is IrBreak               -> return evaluateBreak              (value)
-            is IrContinue            -> return evaluateContinue           (value)
-            is IrGetObjectValue      -> return evaluateGetObjectValue     (value)
-            is IrCallableReference   -> return evaluateCallableReference  (value)
+            is IrGetValue            -> return evaluateGetValue               (value)
+            is IrSetVariable         -> return evaluateSetVariable            (value)
+            is IrGetField            -> return evaluateGetField               (value)
+            is IrSetField            -> return evaluateSetField               (value)
+            is IrConst<*>            -> return evaluateConst                  (value)
+            is IrReturn              -> return evaluateReturn                 (value)
+            is IrWhen                -> return evaluateWhen                   (value)
+            is IrThrow               -> return evaluateThrow                  (value)
+            is IrTry                 -> return evaluateTry                    (value)
+            is IrInlineFunctionBody  -> return evaluateInlineFunction         (value)
+            is IrContainerExpression -> return evaluateContainerExpression    (value)
+            is IrWhileLoop           -> return evaluateWhileLoop              (value)
+            is IrDoWhileLoop         -> return evaluateDoWhileLoop            (value)
+            is IrVararg              -> return evaluateVararg                 (value)
+            is IrBreak               -> return evaluateBreak                  (value)
+            is IrContinue            -> return evaluateContinue               (value)
+            is IrGetObjectValue      -> return evaluateGetObjectValue         (value)
+            is IrCallableReference   -> return evaluateCallableReference      (value)
+            is IrSuspendableExpression ->
+                                        return evaluateSuspendableExpression  (value)
+            is IrSuspensionPoint     -> return evaluateSuspensionPoint        (value)
             else                     -> {
                 TODO("${ir2string(value)}")
             }
@@ -1722,6 +1733,9 @@ internal class CodeGeneratorVisitor(val context: Context) : IrElementVisitorVoid
 
 
     //-------------------------------------------------------------------------//
+
+    private val coroutineImplDescriptor = context.builtIns.getKonanInternalClass("CoroutineImpl")
+
     /**
      * Evaluates all arguments of [expression] that are explicitly represented in the IR.
      * Returns results in the same order as LLVM function expects, assuming that all explicit arguments
@@ -1734,9 +1748,22 @@ internal class CodeGeneratorVisitor(val context: Context) : IrElementVisitorVoid
 
         val allValueParameters = expression.descriptor.allParameters
 
-        return allValueParameters.dropWhile { it !in evaluatedArgs }.map {
+        val result = allValueParameters.dropWhile { it !in evaluatedArgs }.map {
             evaluatedArgs[it]!!
         }
+        if (!expression.descriptor.isSuspendFunctionOrLambda)
+            return result
+        val caller = codegen.functionDescriptor!!
+        val continuation = if (caller.isSuspend)
+            codegen.param(caller, caller.allParameters.size)    // The last argument.
+        else {
+            // Suspend call from non-suspend function - must be [CoroutineImpl].
+            assert (caller.name.asString() == "doResume"
+                    && (caller.containingDeclaration as ClassDescriptor).getSuperClassOrAny() == coroutineImplDescriptor,
+                    { "Expected 'CoroutineImpl.doResume' but was '$caller'" })
+            codegen.param(caller, 0)                            // Coroutine itself is a continuation.
+        }
+        return result + continuation
     }
 
     //-------------------------------------------------------------------------//
@@ -1753,6 +1780,61 @@ internal class CodeGeneratorVisitor(val context: Context) : IrElementVisitorVoid
 
         val entry = codegen.functionEntryPointAddress(descriptor as FunctionDescriptor)
         return entry
+    }
+
+    //-------------------------------------------------------------------------//
+
+    private inner class SuspendableExpressionScope(val resumePoints: MutableList<LLVMBasicBlockRef>) : InnerScopeImpl() {
+        override fun addResumePoint(bbLabel: LLVMBasicBlockRef) {
+            resumePoints.add(bbLabel)
+        }
+    }
+
+    private fun evaluateSuspendableExpression(expression: IrSuspendableExpression): LLVMValueRef {
+        val suspensionPointId = evaluateExpression(expression.suspensionPointId)
+        val bbStart = codegen.basicBlock("start")
+        val bbDispatch = codegen.basicBlock("dispatch")
+
+        val resumePoints = mutableListOf<LLVMBasicBlockRef>()
+        using (SuspendableExpressionScope(resumePoints)) {
+            codegen.condBr(codegen.icmpEq(suspensionPointId, kIntPtrZero), bbStart, bbDispatch)
+
+            codegen.positionAtEnd(bbStart)
+            val result = evaluateExpression(expression.result)
+
+            codegen.appendingTo(bbDispatch) {
+                codegen.indirectBr(codegen.intToPtr(suspensionPointId, int8TypePtr), resumePoints)
+            }
+            return result
+        }
+    }
+
+    private inner class SuspensionPointScope(val suspensionPointId: VariableDescriptor,
+                                             val bbResume: LLVMBasicBlockRef): InnerScopeImpl() {
+        override fun genGetValue(descriptor: ValueDescriptor): LLVMValueRef {
+            if (descriptor == suspensionPointId)
+                return codegen.ptrToInt(codegen.blockAddress(bbResume), LLVMInt64Type()!!) // TODO: intptr.
+            return super.genGetValue(descriptor)
+        }
+    }
+
+    private fun evaluateSuspensionPoint(expression: IrSuspensionPoint): LLVMValueRef {
+        val bbResume = codegen.basicBlock("resume")
+        currentCodeContext.addResumePoint(bbResume)
+
+        using (SuspensionPointScope(expression.suspensionPointIdParameter.descriptor, bbResume)) {
+            continuationBlock(expression.type).run {
+                val normalResult = evaluateExpression(expression.result)
+                jump(this, normalResult)
+
+                codegen.positionAtEnd(bbResume)
+                val resumeResult = evaluateExpression(expression.resumeResult)
+                jump(this, resumeResult)
+
+                codegen.positionAtEnd(this.block)
+                return this.value
+            }
+        }
     }
 
     //-------------------------------------------------------------------------//
@@ -1870,6 +1952,11 @@ internal class CodeGeneratorVisitor(val context: Context) : IrElementVisitorVoid
                         codegen.icmpEq(arg0, arg1)
                 }
             }
+            "konan.internal.getContinuation" -> {
+                val caller = codegen.functionDescriptor!!
+                assert (caller.isSuspend, { "Expected suspend function but was '$caller'" })
+                return codegen.param(caller, caller.allParameters.size)
+            }
         }
 
         val interop = context.interopBuiltIns
@@ -1913,6 +2000,7 @@ internal class CodeGeneratorVisitor(val context: Context) : IrElementVisitorVoid
     private val kImmOne      = LLVMConstInt(LLVMInt32Type(),  1, 1)!!
     private val kTrue        = LLVMConstInt(LLVMInt1Type(),   1, 1)!!
     private val kFalse       = LLVMConstInt(LLVMInt1Type(),   0, 1)!!
+    private val kIntPtrZero  = LLVMConstInt(codegen.intPtrType, 0, 1)!!
 
 
     private fun evaluateOperatorCall(callee: IrCall, args: List<LLVMValueRef>): LLVMValueRef {
