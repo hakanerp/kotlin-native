@@ -1512,7 +1512,8 @@ internal class CodeGeneratorVisitor(val context: Context) : IrElementVisitorVoid
             get() = clazz.descriptor.isExported()
         val members = mutableListOf<DIDerivedTypeRef>()
         @Suppress("UNCHECKED_CAST")
-        val scope = if (isExported) DICreateReplaceableCompositeType(
+        val scope = if (isExported && context.shouldContainDebugInfo())
+            DICreateReplaceableCompositeType(
                 refBuilder = context.debugInfo.builder,
                 refScope   = context.debugInfo.compilationModule as DIScopeOpaqueRef,
                 name       = clazz.descriptor.typeInfoSymbolName,
@@ -1709,7 +1710,7 @@ internal class CodeGeneratorVisitor(val context: Context) : IrElementVisitorVoid
     //-------------------------------------------------------------------------//
     private fun debugFieldDeclaration(expression: IrField) {
         val scope = currentCodeContext.classScope() as? ClassScope ?: return
-        if (!scope.isExported) return
+        if (!scope.isExported || !context.shouldContainDebugInfo()) return
         val irFile = (currentCodeContext.fileScope() as FileScope).file
         scope.members.add(DICreateMemberType(
                 refBuilder = context.debugInfo.builder,
