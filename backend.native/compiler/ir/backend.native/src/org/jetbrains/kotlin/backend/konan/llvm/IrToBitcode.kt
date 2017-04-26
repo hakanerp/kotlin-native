@@ -27,7 +27,6 @@ import org.jetbrains.kotlin.backend.konan.descriptors.*
 import org.jetbrains.kotlin.backend.konan.ir.IrInlineFunctionBody
 import org.jetbrains.kotlin.backend.konan.ir.ir2string
 import org.jetbrains.kotlin.builtins.KotlinBuiltIns
-import org.jetbrains.kotlin.codegen.context.ClassContext
 import org.jetbrains.kotlin.descriptors.*
 import org.jetbrains.kotlin.ir.IrElement
 import org.jetbrains.kotlin.ir.IrStatement
@@ -574,30 +573,8 @@ internal class CodeGeneratorVisitor(val context: Context) : IrElementVisitorVoid
             return
         }
         using(ClassScope(declaration)) {
-            if (declaration.descriptor.isExported()) {
-                context.debugInfo.types[declaration.descriptor.defaultType] = DICreateReplaceableCompositeType(
-                        refBuilder = context.debugInfo.builder,
-                        refScope   = context.debugInfo.compilationModule as DIScopeOpaqueRef,
-                        name       = declaration.descriptor.typeInfoSymbolName,
-                        refFile    = file().file(),
-                        line       = declaration.line()) as DITypeOpaqueRef
-            }
-            declaration.acceptChildrenVoid(this)
-            if (declaration.descriptor.isExported()) {
-                context.debugInfo.types[declaration.descriptor.defaultType] = DICreateStructType(
-                        refBuilder    = context.debugInfo.builder,
-                        scope         = context.debugInfo.compilationModule as DIScopeOpaqueRef,
-                        name          = declaration.descriptor.typeInfoSymbolName,
-                        file          = file().file(),
-                        lineNumber    = declaration.line(),
-                        sizeInBits    = 64 /* TODO */,
-                        alignInBits   = 4 /* TODO */,
-                        derivedFrom   = null,
-                        elements      = null,
-                        elementsCount = 0,
-                        refPlace      = context.debugInfo.types[declaration.descriptor.defaultType] as DICompositeTypeRef,
-                        flags         = 0
-                ) as DITypeOpaqueRef
+            debugClassDeclaration(declaration) {
+                declaration.acceptChildrenVoid(this)
             }
         }
     }
@@ -618,6 +595,7 @@ internal class CodeGeneratorVisitor(val context: Context) : IrElementVisitorVoid
 
     override fun visitField(expression: IrField) {
         context.log{"visitField                     : ${ir2string(expression)}"}
+        debugFieldDeclaration(expression)
         val descriptor = expression.descriptor
         if (descriptor.containingDeclaration is PackageFragmentDescriptor) {
             val type = codegen.getLLVMType(descriptor.type)
@@ -1530,6 +1508,17 @@ internal class CodeGeneratorVisitor(val context: Context) : IrElementVisitorVoid
     //-------------------------------------------------------------------------//
 
     private inner class ClassScope(val clazz:IrClass) : InnerScopeImpl() {
+        val isExported
+            get() = clazz.descriptor.isExported()
+        val members = mutableListOf<DIDerivedTypeRef>()
+        @Suppress("UNCHECKED_CAST")
+        val scope = if (isExported) DICreateReplaceableCompositeType(
+                refBuilder = context.debugInfo.builder,
+                refScope   = context.debugInfo.compilationModule as DIScopeOpaqueRef,
+                name       = clazz.descriptor.typeInfoSymbolName,
+                refFile    = file().file(),
+                line       = clazz.line()) as DITypeOpaqueRef
+        else null
         override fun classScope(): CodeContext? = this
     }
 
@@ -1691,6 +1680,51 @@ internal class CodeGeneratorVisitor(val context: Context) : IrElementVisitorVoid
         codegen.resetDebugLocation()
         return result
     }
+
+    //-------------------------------------------------------------------------//
+    @Suppress("UNCHECKED_CAST")
+    private fun debugClassDeclaration(declaration: IrClass, body: () -> Unit): Unit {
+        val doDebugInfo = context.shouldContainDebugInfo() && declaration.descriptor.isExported()
+        val classScope = currentCodeContext.classScope() as ClassScope
+        if (doDebugInfo) context.debugInfo.types[declaration.descriptor.defaultType] = classScope.scope!!
+        body()
+        memScoped {
+            if (doDebugInfo) context.debugInfo.types[declaration.descriptor.defaultType] = DICreateStructType(
+                    refBuilder = context.debugInfo.builder,
+                    scope = context.debugInfo.compilationModule as DIScopeOpaqueRef,
+                    name = declaration.descriptor.typeInfoSymbolName,
+                    file = file().file(),
+                    lineNumber = declaration.line(),
+                    sizeInBits = 64 /* TODO */,
+                    alignInBits = 4 /* TODO */,
+                    derivedFrom = null,
+                    elements = classScope.members.toCValues(),
+                    elementsCount = classScope.members.size.toLong(),
+                    refPlace = context.debugInfo.types[declaration.descriptor.defaultType] as DICompositeTypeRef,
+                    flags = 0
+            ) as DITypeOpaqueRef
+        }
+    }
+
+    //-------------------------------------------------------------------------//
+    private fun debugFieldDeclaration(expression: IrField) {
+        val scope = currentCodeContext.classScope() as? ClassScope ?: return
+        if (!scope.isExported) return
+        val irFile = (currentCodeContext.fileScope() as FileScope).file
+        scope.members.add(DICreateMemberType(
+                refBuilder = context.debugInfo.builder,
+                refScope = scope.scope as DIScopeOpaqueRef,
+                name     = expression.descriptor.symbolName,
+                file     = irFile.file(),
+                lineNum  = expression.line(),
+                sizeInBits = expression.descriptor.type.size(),
+                alignInBits = expression.descriptor.type.alignment(),
+                offsetInBits = 0, /* TODO */
+                flags = 0,
+                type = expression.descriptor.diType
+        )!!)
+    }
+
 
     //-------------------------------------------------------------------------//
     private fun IrFile.file(): DIFileRef {
@@ -2134,6 +2168,15 @@ internal class CodeGeneratorVisitor(val context: Context) : IrElementVisitorVoid
         }
     }
 }
+
+private fun KotlinType.size(): Long {
+    return 64
+}
+
+private fun KotlinType.alignment(): Long {
+    return 4
+}
+
 
 internal data class LocationInfo(val scope:DIScopeOpaqueRef?, val line:Int, val column:Int)
 
